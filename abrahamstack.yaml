@@ -1,0 +1,307 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Abraham - VPC, ALB, ECS Fargate service for Flask app
+
+Parameters:
+  ImageTag:
+    Type: String
+    Default: latest
+    Description: ECR image tag in 054037097554.dkr.ecr.ca-central-1.amazonaws.com/abraham-app
+
+Mappings:
+  RegionMap:
+    ca-central-1:
+      AZ1: ca-central-1a
+      AZ2: ca-central-1b
+
+Resources:
+  # ---------------- VPC + Networking ----------------
+  AbrahamVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Abraham-vpc
+
+  AbrahamIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Abraham-igw
+
+  AbrahamIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref AbrahamVPC
+      InternetGatewayId: !Ref AbrahamIGW
+
+  AbrahamPublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AbrahamVPC
+      AvailabilityZone: !FindInMap [RegionMap, !Ref "AWS::Region", AZ1]
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Abraham-public-1a
+
+  AbrahamPublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AbrahamVPC
+      AvailabilityZone: !FindInMap [RegionMap, !Ref "AWS::Region", AZ2]
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Abraham-public-1b
+
+  AbrahamPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AbrahamVPC
+      AvailabilityZone: !FindInMap [RegionMap, !Ref "AWS::Region", AZ1]
+      CidrBlock: 10.0.3.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: Abraham-private-1a
+
+  AbrahamPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AbrahamVPC
+      AvailabilityZone: !FindInMap [RegionMap, !Ref "AWS::Region", AZ2]
+      CidrBlock: 10.0.4.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: Abraham-private-1b
+
+  AbrahamPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AbrahamVPC
+      Tags:
+        - Key: Name
+          Value: Abraham-public-rt
+
+  AbrahamPublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref AbrahamPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref AbrahamIGW
+
+  AbrahamPublicSubnet1Assoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AbrahamPublicSubnet1
+      RouteTableId: !Ref AbrahamPublicRouteTable
+
+  AbrahamPublicSubnet2Assoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AbrahamPublicSubnet2
+      RouteTableId: !Ref AbrahamPublicRouteTable
+
+  AbrahamNatEip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  AbrahamNatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt AbrahamNatEip.AllocationId
+      SubnetId: !Ref AbrahamPublicSubnet1
+      Tags:
+        - Key: Name
+          Value: Abraham-nat-1a
+
+  AbrahamPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AbrahamVPC
+      Tags:
+        - Key: Name
+          Value: Abraham-private-rt
+
+  AbrahamPrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref AbrahamPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref AbrahamNatGateway
+
+  AbrahamPrivateSubnet1Assoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AbrahamPrivateSubnet1
+      RouteTableId: !Ref AbrahamPrivateRouteTable
+
+  AbrahamPrivateSubnet2Assoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AbrahamPrivateSubnet2
+      RouteTableId: !Ref AbrahamPrivateRouteTable
+
+  # ---------------- Security Groups ----------------
+  AbrahamAlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Abraham-alb-sg
+      VpcId: !Ref AbrahamVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Abraham-alb-sg
+
+  AbrahamEcsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Abraham-ecs-sg
+      VpcId: !Ref AbrahamVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          SourceSecurityGroupId: !Ref AbrahamAlbSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Abraham-ecs-sg
+
+  # ---------------- Load Balancer ----------------
+  AbrahamTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: Abraham-tg
+      Port: 5000
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref AbrahamVPC
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      Matcher:
+        HttpCode: 200
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "60"
+
+  AbrahamAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: Abraham-alb
+      Scheme: internet-facing
+      Type: application
+      IpAddressType: ipv4
+      SecurityGroups:
+        - !Ref AbrahamAlbSecurityGroup
+      Subnets:
+        - !Ref AbrahamPublicSubnet1
+        - !Ref AbrahamPublicSubnet2
+      Tags:
+        - Key: Name
+          Value: Abraham-alb
+
+  AbrahamAlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref AbrahamAlb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AbrahamTargetGroup
+
+  # ---------------- ECS Cluster + Roles ----------------
+  AbrahamEcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: Abraham-cluster
+
+  AbrahamEcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: Abraham-ecs-task-execution-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  AbrahamTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: Abraham-task
+      Cpu: "256"
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt AbrahamEcsTaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: Abraham-container
+          Image: !Sub "054037097554.dkr.ecr.ca-central-1.amazonaws.com/abraham-app:${ImageTag}"
+          PortMappings:
+            - ContainerPort: 5000
+              Protocol: tcp
+          Essential: true
+
+  AbrahamEcsService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - AbrahamAlbListener
+    Properties:
+      ServiceName: Abraham-service
+      Cluster: !Ref AbrahamEcsCluster
+      TaskDefinition: !Ref AbrahamTaskDefinition
+      DesiredCount: 2
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref AbrahamEcsSecurityGroup
+          Subnets:
+            - !Ref AbrahamPrivateSubnet1
+            - !Ref AbrahamPrivateSubnet2
+      LoadBalancers:
+        - TargetGroupArn: !Ref AbrahamTargetGroup
+          ContainerName: Abraham-container
+          ContainerPort: 5000
+
+Outputs:
+  AlbDNSName:
+    Description: ALB DNS name to use in browser
+    Value: !GetAtt AbrahamAlb.DNSName
+
+  ClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref AbrahamEcsCluster
+
+  ServiceName:
+    Description: ECS Service Name
+    Value: !Ref AbrahamEcsService
