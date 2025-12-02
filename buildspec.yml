@@ -13,4 +13,8 @@ phases:
       - docker push 054037097554.dkr.ecr.ca-central-1.amazonaws.com/abraham-app:latest
   post_build:
     commands:
-      - echo Build completed successfully
+      - echo Writing imagedefinitions.json...
+      - printf '[{"name":"Abraham-container","imageUri":"054037097554.dkr.ecr.ca-central-1.amazonaws.com/abraham-app:latest"}]' > imagedefinitions.json
+artifacts:
+  files:
+    - imagedefinitions.json
