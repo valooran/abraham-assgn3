@@ -1,4 +1,4 @@
-FROM python:3.9-slim
+FROM public.ecr.aws/docker/library/python:3.9-slim
 WORKDIR /app
 COPY app.py .
 RUN pip install flask==2.3.3
